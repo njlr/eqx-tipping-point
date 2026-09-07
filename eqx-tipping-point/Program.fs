@@ -1,5 +1,4 @@
 ﻿open System
-open Amazon
 open Amazon.DynamoDBv2
 open Equinox
 open Equinox.DynamoStore
@@ -7,22 +6,23 @@ open FsCodec
 open Serilog
 
 type Add =
-    {
-        Increase : int
-        RequestedBy : string
-        Notes : string
-    }
+  {
+    Increase : int
+    RequestedBy : string
+    Notes : string
+  }
 
 type Subtract =
-    {
-        Decrease : int
-        RequestedBy : string
-    }
+  {
+    Decrease : int
+    RequestedBy : string
+  }
 
 type Event =
-    | Add of Add
-    | Subtract of Subtract
-    interface TypeShape.UnionContract.IUnionContract
+  | Add of Add
+  | Subtract of Subtract
+  interface TypeShape.UnionContract.IUnionContract
+
 
 module Serialization =
 
@@ -35,121 +35,128 @@ module Serialization =
 
 
 module Fold =
-    
-    type State =
-        {
-            Count : int
-        }
-    
-    let evolve (state : State) (event : Event) : State =
-        
-        let invalid () =
-            failwith $"Unexpected evolution `%A{event}` from `%A{state}`"
-        
-        if state.Count > Int32.MaxValue then
-            invalid()
-        else 
-            match event with
-            | Add x -> { Count = state.Count + x.Increase }
-            | Subtract x -> { Count = state.Count - x.Decrease }
-    
-    let initial : State = { Count = 0 }
-    
-    let fold state events = Array.fold evolve state events
+
+  type State =
+    {
+      Count : int
+    }
+
+  let evolve (state : State) (event : Event) : State =
+
+    let invalid () =
+      failwith $"Unexpected evolution `%A{event}` from `%A{state}`"
+
+    if state.Count > Int32.MaxValue then
+      invalid()
+    else
+      match event with
+      | Add x -> { Count = state.Count + x.Increase }
+      | Subtract x -> { Count = state.Count - x.Decrease }
+
+  let initial : State = { Count = 0 }
+
+  let fold state events = Array.fold evolve state events
+
 
 module Decisions =
 
-    open Fold
+  open Fold
 
-    type AddError =
-        | MaxReached
-  
-    let tryAdd (notes : string) (requestedBy : string) (count : int) (state : State) : Result<unit, AddError> * Event array =
-        if state.Count > Int32.MaxValue then
-            Error MaxReached, [||]
-        else
-            Ok (), [| Add { Increase = count; RequestedBy = requestedBy; Notes = notes } |]
-    
-    type SubtractError =
-        | MinReached
-    
-    let trySubtract (requestedBy : string) (count : int) (state : State) : Result<unit, SubtractError> * Event array =
-        if state.Count < Int32.MinValue then
-            Error MinReached, [||]
-        else
-            Ok (), [| Subtract { Decrease = count; RequestedBy = requestedBy } |]
+  type AddError =
+    | MaxReached
+
+  let tryAdd (notes : string) (requestedBy : string) (count : int) (state : State) : Result<unit, AddError> * Event array =
+    if state.Count > 10_000 then
+      Error MaxReached, [||]
+    else
+      Ok (), [| Add { Increase = count; RequestedBy = requestedBy; Notes = notes } |]
+
+  type SubtractError =
+    | MinReached
+
+  let trySubtract (requestedBy : string) (count : int) (state : State) : Result<unit, SubtractError> * Event array =
+    if state.Count < 0 then
+      Error MinReached, [||]
+    else
+      Ok (), [| Subtract { Decrease = count; RequestedBy = requestedBy } |]
+
 
 [<RequireQualifiedAccess>]
 module Counter =
 
-    type Service (resolve : Guid -> Equinox.Decider<Event, Fold.State>) =
-        
-        member _.TryAdd(id : Guid, requestedBy : string, notes : string, count : int) =
-            let decider = resolve id
-            decider.Transact(Decisions.tryAdd notes requestedBy count)
+  type Service (resolve : Guid -> Equinox.Decider<Event, Fold.State>) =
 
-        member _.TrySubtract(id : Guid, requestedBy : string, count : int) =
-            let decider = resolve id
-            decider.Transact(Decisions.trySubtract requestedBy count)
+    member _.TryAdd(id : Guid, requestedBy : string, notes : string, count : int) =
+      let decider = resolve id
+      decider.Transact(Decisions.tryAdd notes requestedBy count)
 
-        member _.TryFetch(id : Guid) =
-            let decider = resolve id
-            decider.Query(fun x -> x)
+    member _.TrySubtract(id : Guid, requestedBy : string, count : int) =
+      let decider = resolve id
+      decider.Transact(Decisions.trySubtract requestedBy count)
 
-    [<Literal>]
-    let Category = "Counter"
+    member _.TryFetch(id : Guid) =
+      let decider = resolve id
+      decider.Query(fun x -> x)
 
-    let streamID =
-        StreamId.gen (fun i -> i.ToString())
+  [<Literal>]
+  let Category = "Counter"
 
-    let create (resolve : _ -> _ -> _) : Service =
-        Service(streamID >> resolve Category)
-        
+  let streamID =
+    StreamId.gen (fun i -> i.ToString())
+
+  let create (resolve : _ -> _ -> _) : Service =
+    Service(streamID >> resolve Category)
+
 
 [<EntryPoint>]
-let main _ = 
-    async {
-    
-        let awsAccessKeyID = ""
-        let awsSecretAccessKey = ""
-        
-        let awsRegion = RegionEndpoint.EUWest2
+let main _ =
+  async {
+    let log = LoggerConfiguration().WriteTo.Console().CreateLogger()
 
-        let dynamo =
-            let config = AmazonDynamoDBConfig()
-            config.RegionEndpoint <- awsRegion
-            new AmazonDynamoDBClient(awsAccessKeyID, awsSecretAccessKey, config)
-        
-    
-        let service : Counter.Service =
-            let dynamoStoreClient = DynamoStoreClient(dynamo)
-            let context = DynamoStoreContext(dynamoStoreClient, "table")
-            let accessStrategy = AccessStrategy.Unoptimized
-            let cache = Cache("counter", sizeMb = 50)
-            let caching = CachingStrategy.SlidingWindow(cache, TimeSpan.FromMinutes(20.))
-            let codec = Encoder.Compressed Serialization.codec
-            let serilog = LoggerConfiguration().WriteTo.Console().CreateLogger()
-            (fun category ->
-                DynamoStoreCategory(
-                    context,
-                    category,
-                    codec,
-                    Fold.fold,
-                    Fold.initial,
-                    accessStrategy,
-                    caching)
-                |> Decider.forStream serilog)
-                |> Counter.create
+    let awsAccessKeyID = "abc"
+    let awsSecretAccessKey = "def"
 
-        let counterID = Guid "f5f67af6-afa5-4618-b36b-84b4a056061f"
-    
-        for i in 1..400 do
-            do! service.TryAdd(counterID, "user", "add to account", i ) |> Async.Ignore
+    let dynamo =
+      let config = AmazonDynamoDBConfig()
+      config.ServiceURL <- "http://localhost:8000"
+      config.UseHttp <- true
+      config.AuthenticationRegion <- "eu-west-2"
+      new AmazonDynamoDBClient(awsAccessKeyID, awsSecretAccessKey, config)
 
-        for i in 1..400 do            
-            do! service.TrySubtract(counterID, "user", i ) |> Async.Ignore
-    
-        printfn "done!"
-    }
-    |> Async.RunSynchronously
-    0
+    let service : Counter.Service =
+      let dynamoStoreClient = DynamoStoreClient(dynamo)
+      let context = DynamoStoreContext(dynamoStoreClient, "eqx")
+      let accessStrategy = AccessStrategy.Unoptimized
+      let cache = Cache("counter", sizeMb = 50)
+      let caching = CachingStrategy.SlidingWindow(cache, TimeSpan.FromMinutes(20.))
+      let codec = Encoder.Compressed Serialization.codec
+      (fun category ->
+        DynamoStoreCategory(
+          context,
+          category,
+          codec,
+          Fold.fold,
+          Fold.initial,
+          accessStrategy,
+          caching)
+        |> Decider.forStream log)
+        |> Counter.create
+
+    let counterID = Guid.NewGuid()
+
+    log.Information $"Counter ID: %A{counterID}"
+
+    for i in 1 .. 2_000 do
+      do! service.TryAdd(counterID, "user", "add to account", i) |> Async.Ignore
+
+    for i in 1 .. 1_000 do
+      do! service.TrySubtract(counterID, "user", i) |> Async.Ignore
+
+    for i in 1 .. 1_000 do
+      do! service.TryAdd(counterID, "user", "add to account", i) |> Async.Ignore
+
+    log.Information $"Done with %A{counterID}"
+  }
+  |> Async.RunSynchronously
+
+  0
