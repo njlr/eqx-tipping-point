@@ -66,7 +66,7 @@ module Decisions =
     | MaxReached
 
   let tryAdd (notes : string) (requestedBy : string) (count : int) (state : State) : Result<unit, AddError> * Event array =
-    if state.Count > 10_000 then
+    if state.Count > 1_000_000 then
       Error MaxReached, [||]
     else
       Ok (), [| Add { Increase = count; RequestedBy = requestedBy; Notes = notes } |]
