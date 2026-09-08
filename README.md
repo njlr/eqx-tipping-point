@@ -1,5 +1,8 @@
 # eqx-tipping-point
 
+> [!TIP]
+> Possible work-around is to update to `AWSSDK.DynamoDBv2` >= `4.0.15`
+
 The issue appears when writing many events quickly to Dynamo.
 
 Start the sandbox:

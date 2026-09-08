@@ -148,7 +148,7 @@ let main _ =
 
     let random = Random()
 
-    for _ = 1 to 10 do
+    for _ = 1 to 100 do
       for i = 1 to 100 do
         do!
           service.TryAdd(counterID, "user", "add to account", random.Next(i))

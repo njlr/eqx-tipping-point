@@ -7,8 +7,10 @@
         <Compile Include="Program.fs" />
     </ItemGroup>
     <ItemGroup>
-      <PackageReference Include="AWSSDK.Core" Version="4.0.3.12" />
-      <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.10.9" />
+      <PackageReference Include="AWSSDK.Core" Version="4.0.3.15" />
+      <!-- <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.10.9" /> -->
+      <!-- Fixed in AWSSDK.DynamoDBv2 ≥ 4.0.15  -->
+      <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.15.0" />
       <PackageReference Include="Equinox.Core" Version="4.1.1" />
       <PackageReference Include="Equinox.DynamoStore" Version="4.2.0-rc.1" />
       <PackageReference Include="Equinox" Version="4.1.0" />
