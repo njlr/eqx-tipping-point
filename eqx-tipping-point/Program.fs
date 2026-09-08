@@ -102,7 +102,7 @@ module Counter =
   let Category = "Counter"
 
   let streamID =
-    StreamId.gen (fun i -> i.ToString())
+    StreamId.gen (fun (g : Guid) -> g.ToString("N"))
 
   let create (resolve : _ -> _ -> _) : Service =
     Service(streamID >> resolve Category)
@@ -146,16 +146,22 @@ let main _ =
 
     log.Information $"Counter ID: %A{counterID}"
 
-    for i in 1 .. 2_000 do
-      do! service.TryAdd(counterID, "user", "add to account", i) |> Async.Ignore
+    let random = Random()
 
-    for i in 1 .. 1_000 do
-      do! service.TrySubtract(counterID, "user", i) |> Async.Ignore
+    for _ = 1 to 10 do
+      for i = 1 to 100 do
+        do!
+          service.TryAdd(counterID, "user", "add to account", random.Next(i))
+          |> Async.Ignore
 
-    for i in 1 .. 1_000 do
-      do! service.TryAdd(counterID, "user", "add to account", i) |> Async.Ignore
+      for i = 1 to 100 do
+        do!
+          service.TrySubtract(counterID, "user", random.Next(i))
+          |> Async.Ignore
 
-    log.Information $"Done with %A{counterID}"
+    let dumpCommand = sprintf "./dump.sh Counter-%s" (counterID.ToString("N"))
+
+    log.Information dumpCommand
   }
   |> Async.RunSynchronously
 
